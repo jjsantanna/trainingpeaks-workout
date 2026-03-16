@@ -3,6 +3,7 @@
     🏃 TrainingPeaks Workout of the Day → Telegram [OpenClaw]
   </h1>
   <img src="https://img.shields.io/badge/DoneBy-OpenClaw-red">
+  <img src="https://img.shields.io/badge/Python-Script-blue">
   
   Fetches your planned workout from TrainingPeaks and sends it to Telegram — with real pace targets, per-section distances, and a total distance estimate.
 </div>
