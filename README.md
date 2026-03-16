@@ -1,6 +1,15 @@
-# 🏃 TrainingPeaks Workout of the Day → Telegram
+<div align="center">
+  <h1>
+    <img src="img/logo_ai_web_pentesting.png" width="100" align="center"><br>
+    🏃 TrainingPeaks Workout of the Day → Telegram [OpenClaw]
+  </h1>
 
-Fetches your planned workout from TrainingPeaks and sends it to Telegram — with real pace targets, per-section distances, and a total distance estimate.
+  <img src="https://img.shields.io/badge/DoneBy-OpenClaw">
+  
+  Fetches your planned workout from TrainingPeaks and sends it to Telegram — with real pace targets, per-section distances, and a total distance estimate.
+</div>
+
+
 
 ## Example output
 
