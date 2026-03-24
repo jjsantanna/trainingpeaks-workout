@@ -202,14 +202,45 @@ def fmt_intensity(lo, hi, threshold_speed_ms, intensity_metric):
     return f"{lo}-{hi}%" if lo and hi else ""
 
 
-def step_distance_km(secs, lo, hi, threshold_speed_ms, intensity_metric):
-    """Return distance in km for a single step, or None if not calculable."""
-    if not threshold_speed_ms or not secs:
+def step_distance_km(step, threshold_speed_ms, intensity_metric):
+    """Return distance in km for a single step, or None if not calculable.
+
+    Handles three cases:
+      1. Step length is a distance unit (meter / kilometer) → direct read.
+      2. Step length is time + pace-based metric + threshold → velocity × time.
+      3. Step length is time + HR/power metric → cannot estimate, return None.
+    """
+    slen  = step.get("length", {})
+    unit  = slen.get("unit", "")
+    value = slen.get("value") or 0
+
+    # ── Case 1: distance-based step ──────────────────────────────────────────
+    if unit == "meter":
+        return value / 1000.0
+    if unit == "kilometer":
+        return float(value)
+
+    # ── Case 2 / 3: time-based step ─────────────────────────────────────────
+    if unit == "second":
+        secs = value
+    elif unit == "minute":
+        secs = value * 60
+    else:
+        return None   # unknown unit
+
+    if not secs:
         return None
-    if intensity_metric and "pace" in intensity_metric.lower():
+
+    t  = step.get("targets", [{}])[0]
+    lo = t.get("minValue")
+    hi = t.get("maxValue")
+
+    if intensity_metric and "pace" in intensity_metric.lower() and threshold_speed_ms:
         avg_pct = ((lo or hi) + (hi or lo)) / 2.0
-        speed = threshold_speed_ms * (avg_pct / 100.0)   # m/s
-        return speed * secs / 1000.0                      # km
+        if avg_pct:
+            speed = threshold_speed_ms * (avg_pct / 100.0)   # m/s
+            return speed * secs / 1000.0                      # km
+
     return None
 
 
@@ -234,11 +265,18 @@ def fmt_structure(structure, threshold_speed_ms=None):
             for step in steps:
                 slen = step.get("length", {})
                 t    = step.get("targets", [{}])[0]
-                secs = slen.get("value", 0) if slen.get("unit") == "second" else slen.get("value", 0) * 60
                 lo, hi = t.get("minValue"), t.get("maxValue")
-                dur  = f"{int(secs//60)}'" if secs >= 60 else f"{int(secs)}\""
+                # human-readable duration label
+                unit  = slen.get("unit", "")
+                value = slen.get("value") or 0
+                if unit in ("meter", "kilometer"):
+                    d_m = value if unit == "meter" else value * 1000
+                    dur = f"{int(d_m)}m" if d_m < 1000 else f"{d_m/1000:.1f}km"
+                else:
+                    secs = value if unit == "second" else value * 60
+                    dur  = f"{int(secs//60)}'" if secs >= 60 else f"{int(secs)}\""
                 intensity = fmt_intensity(lo, hi, threshold_speed_ms, intensity_metric)
-                d_km = step_distance_km(secs, lo, hi, threshold_speed_ms, intensity_metric)
+                d_km = step_distance_km(step, threshold_speed_ms, intensity_metric)
                 if d_km is not None:
                     block_km += d_km
                 parts.append(f"{dur} {intensity}".strip())
@@ -254,11 +292,18 @@ def fmt_structure(structure, threshold_speed_ms=None):
             for step in steps:
                 slen = step.get("length", {})
                 t    = step.get("targets", [{}])[0]
-                secs = slen.get("value", 0) if slen.get("unit") == "second" else slen.get("value", 0) * 60
                 lo, hi = t.get("minValue"), t.get("maxValue")
-                dur  = f"{int(secs//60)}'" if secs >= 60 else f"{int(secs)}\""
+                # human-readable duration label
+                unit  = slen.get("unit", "")
+                value = slen.get("value") or 0
+                if unit in ("meter", "kilometer"):
+                    d_m = value if unit == "meter" else value * 1000
+                    dur = f"{int(d_m)}m" if d_m < 1000 else f"{d_m/1000:.1f}km"
+                else:
+                    secs = value if unit == "second" else value * 60
+                    dur  = f"{int(secs//60)}'" if secs >= 60 else f"{int(secs)}\""
                 intensity = fmt_intensity(lo, hi, threshold_speed_ms, intensity_metric)
-                d_km = step_distance_km(secs, lo, hi, threshold_speed_ms, intensity_metric)
+                d_km = step_distance_km(step, threshold_speed_ms, intensity_metric)
                 name = step.get("name", "")
                 if d_km is not None:
                     total_km += d_km
