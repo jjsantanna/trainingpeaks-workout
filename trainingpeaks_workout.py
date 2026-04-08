@@ -7,6 +7,9 @@ Usage:
     python3 trainingpeaks_workout.py             # sends to Telegram
     python3 trainingpeaks_workout.py --print     # print only, no Telegram
     python3 trainingpeaks_workout.py --date 2026-03-15  # specific date
+    python3 trainingpeaks_workout.py --move-to-today              # move yesterday's workout to today
+    python3 trainingpeaks_workout.py --move-to-today --from-date 2026-04-06  # move specific date to today
+    python3 trainingpeaks_workout.py --move-to-today --to-date 2026-04-10   # move yesterday to a specific date
 """
 
 import argparse
@@ -16,12 +19,12 @@ import sys
 import urllib.request
 import urllib.parse
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Credentials file: { "trainingpeaks": { "username": "...", "password": "..." },
 #                     "telegram": { "token": "...", "chat_id": "..." } }
-CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), "credentials.json")
+CREDENTIALS_FILE = "/home/node/.openclaw/workspace/private/credentials.json"
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT    = os.environ.get("TELEGRAM_CHAT_ID", "")
 
@@ -55,7 +58,7 @@ def load_credentials():
 def get_telegram_config(creds):
     """Return (token, chat_id) — env vars take priority over credentials file."""
     token   = TELEGRAM_TOKEN or creds.get("telegram", {}).get("token", "")
-    chat_id = TELEGRAM_CHAT  or creds.get("telegram", {}).get("chat_id", "")
+    chat_id = TELEGRAM_CHAT  or creds.get("telegram", {}).get("workout_chat_id") or creds.get("telegram", {}).get("chat_id", "")
     return token, chat_id
 
 
@@ -137,6 +140,43 @@ def fetch_workouts(access_token, user_id, date_str):
     })
     resp = urllib.request.urlopen(req, timeout=10)
     return json.loads(resp.read().decode())
+
+
+def move_workout(access_token, user_id, workout_id, new_date_str, workout_data=None):
+    """Reschedule a workout to a new date.
+
+    Strategy: try PUT with full workout body (standard TP API pattern).
+    The workout_data dict should be the original workout from fetch_workouts().
+
+    Args:
+        access_token:  Bearer token from login_and_get_token()
+        user_id:       Athlete user ID
+        workout_id:    The workout's unique ID
+        new_date_str:  Target date in YYYY-MM-DD format
+        workout_data:  Full original workout dict (required for PUT)
+
+    Returns:
+        Updated workout dict from the API.
+    """
+    url = (f"https://tpapi.trainingpeaks.com/fitness/v6/athletes"
+           f"/{user_id}/workouts/{workout_id}")
+    new_day_iso = f"{new_date_str}T00:00:00"
+    body = {**(workout_data or {}), "workoutDay": new_day_iso, "athleteId": user_id}
+    payload = json.dumps(body).encode()
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method="PUT",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Origin": "https://app.trainingpeaks.com",
+            "Referer": "https://app.trainingpeaks.com/",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode())
 
 
 def fetch_threshold_speed(access_token, user_id):
@@ -378,9 +418,18 @@ def send_telegram(message, token, chat_id):
 
 
 def main():
+    today     = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
     parser = argparse.ArgumentParser(description="TrainingPeaks daily workout")
-    parser.add_argument("--date",  default=datetime.now().strftime("%Y-%m-%d"))
+    parser.add_argument("--date",  default=today)
     parser.add_argument("--print", action="store_true", dest="print_only")
+    parser.add_argument("--move-to-today", action="store_true", dest="move_to_today",
+                        help="Move workout(s) from --from-date (default: yesterday) to --to-date (default: today)")
+    parser.add_argument("--from-date", default=yesterday, dest="from_date",
+                        help="Source date for move (default: yesterday, YYYY-MM-DD)")
+    parser.add_argument("--to-date", default=today, dest="to_date",
+                        help="Target date for move (default: today, YYYY-MM-DD)")
     args = parser.parse_args()
 
     creds    = load_credentials()
@@ -403,6 +452,33 @@ def main():
     access_token, user_id = login_and_get_token(username, password)
     print(f"✅ Logged in (userId={user_id})")
 
+    # ── Move workout(s) to another day ──────────────────────────────────────
+    if args.move_to_today:
+        print(f"📅 Fetching workouts for {args.from_date} (source)...")
+        source_workouts = fetch_workouts(access_token, user_id, args.from_date)
+        if not source_workouts:
+            msg = f"🗓 No workouts found on {args.from_date} to move."
+            print(msg)
+            if not args.print_only:
+                send_telegram(msg, tg_token, tg_chat)
+            return
+        moved = []
+        for w in source_workouts:
+            wid   = w.get("workoutId") or w.get("id")
+            title = w.get("title", "Untitled")
+            print(f"  ↪ Moving '{title}' (id={wid}) → {args.to_date}...")
+            move_workout(access_token, user_id, wid, args.to_date, workout_data=w)
+            moved.append(title)
+            print(f"  ✅ Moved!")
+        summary = (
+            f"✅ Moved {len(moved)} workout(s) from {args.from_date} → {args.to_date}:\n"
+            + "\n".join(f"  • {t}" for t in moved)
+        )
+        print(summary)
+        if not args.print_only:
+            send_telegram(summary, tg_token, tg_chat)
+        return
+
     print(f"📅 Fetching workouts for {args.date}...")
     workouts = fetch_workouts(access_token, user_id, args.date)
     threshold_speed = fetch_threshold_speed(access_token, user_id)
@@ -415,7 +491,7 @@ def main():
         msg = f"🗓 No workout planned for {args.date}. Rest day! 🛋️"
         print(msg)
         if not args.print_only:
-            send_telegram(msg)
+            send_telegram(msg, tg_token, tg_chat)
         return
 
     for w in workouts:
